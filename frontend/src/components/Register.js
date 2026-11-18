@@ -1,98 +1,102 @@
-import React, { useState, useContext } from "react";
-import { Form, Input, Button, message, Card } from "antd";
-import { useNavigate } from "react-router-dom";
-import axios from "axios";
-import { ThemeContext } from "../context/ThemeContext";
+import React, { useState } from "react";
+import { Alert, Button, Form, Input, message } from "antd";
+import { LockOutlined, MailOutlined } from "@ant-design/icons";
+import { Link, useNavigate } from "react-router-dom";
+import api, { getErrorMessage } from "../api/client";
+import AuthLayout from "./AuthLayout";
 
-const Register = ({ setAuth }) => {
+// Real, local strength hint (length and character variety), not a security guarantee.
+const strength = (pw = "") => {
+  let score = 0;
+  if (pw.length >= 8) score++;
+  if (pw.length >= 12) score++;
+  if (/[a-z]/.test(pw) && /[A-Z]/.test(pw)) score++;
+  if (/\d/.test(pw) && /[^A-Za-z0-9]/.test(pw)) score++;
+  return pw ? Math.max(1, score) : 0;
+};
+const STRENGTH_LABELS = ["", "Weak", "Fair", "Good", "Strong"];
+
+const Register = () => {
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [password, setPassword] = useState("");
   const navigate = useNavigate();
-  const { isDarkMode } = useContext(ThemeContext);
+  const level = strength(password);
 
   const onFinish = async (values) => {
+    if (loading) return;
     setLoading(true);
+    setError(null);
     try {
-      console.log("API URL:", process.env.REACT_APP_API_URL);
-      await axios.post(`${process.env.REACT_APP_API_URL}/auth/register`, {
+      await api.post("/auth/register", {
         email: values.email,
         password: values.password,
       });
-      message.success("Registration successful. Please log in.");
+      message.success("Account created. Please log in.");
       navigate("/login");
-    } catch (error) {
-      console.error("Registration error:", error);
-      let errorMessage = "Registration failed";
-      if (error.response?.data?.detail) {
-        errorMessage = Array.isArray(error.response.data.detail)
-          ? error.response.data.detail.map((err) => err.msg).join(", ")
-          : error.response.data.detail;
-      }
-      message.error(errorMessage);
+    } catch (err) {
+      console.error("Registration error:", err);
+      setError(getErrorMessage(err, "Registration failed"));
     }
     setLoading(false);
   };
 
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        minHeight: "100vh",
-      }}
+    <AuthLayout
+      title="Create your account"
+      subtitle="It takes a few seconds. Then set up your first interview."
+      footer={
+        <>
+          Already registered? <Link to="/login">Log in</Link>
+        </>
+      }
     >
-      <Card
-        style={{ width: "100%", maxWidth: "400px", padding: "24px" }}
-        className="card-content"
-      >
-        <h2
-          style={{
-            fontSize: "24px",
-            fontWeight: "bold",
-            textAlign: "center",
-            marginBottom: "24px",
-            color: isDarkMode ? "#fff" : "#000",
-          }}
+      {error && <Alert type="error" showIcon message={error} role="alert" className="auth-alert" />}
+      <Form layout="vertical" onFinish={onFinish} requiredMark={false} size="large" onValuesChange={() => error && setError(null)}>
+        <Form.Item
+          label="Email"
+          name="email"
+          rules={[
+            { required: true, message: "Please enter your email" },
+            { type: "email", message: "Please enter a valid email address" },
+          ]}
         >
-          Register
-        </h2>
-        <Form onFinish={onFinish} layout="vertical">
-          <Form.Item
-            name="email"
-            label={
-              <span style={{ color: isDarkMode ? "#fff" : "#000" }}>Email</span>
-            }
-            rules={[
-              { required: true, message: "Please input your email!" },
-              { type: "email", message: "Please enter a valid email!" },
-            ]}
-          >
-            <Input placeholder="Email" />
-          </Form.Item>
-          <Form.Item
-            name="password"
-            label={
-              <span style={{ color: isDarkMode ? "#fff" : "#000" }}>
-                Password
+          <Input prefix={<MailOutlined />} placeholder="Email" autoComplete="email" />
+        </Form.Item>
+        <Form.Item
+          label="Password"
+          name="password"
+          rules={[
+            { required: true, message: "Please input your password!" },
+            { min: 8, message: "Password must be at least 8 characters" },
+          ]}
+          extra={
+            password ? (
+              <span className="strength" aria-live="polite">
+                <span className="strength-bars" aria-hidden="true">
+                  {[1, 2, 3, 4].map((n) => (
+                    <i key={n} className={n <= level ? `on on-${level}` : ""} />
+                  ))}
+                </span>
+                {STRENGTH_LABELS[level]}
               </span>
-            }
-            rules={[{ required: true, message: "Please input your password!" }]}
-          >
-            <Input.Password placeholder="Password" />
-          </Form.Item>
-          <Form.Item>
-            <Button type="primary" htmlType="submit" loading={loading} block>
-              Register
-            </Button>
-          </Form.Item>
-          <div style={{ textAlign: "center" }}>
-            <Button type="link" onClick={() => navigate("/login")}>
-              Already have an account? Login
-            </Button>
-          </div>
-        </Form>
-      </Card>
-    </div>
+            ) : (
+              "At least 8 characters."
+            )
+          }
+        >
+          <Input.Password
+            prefix={<LockOutlined />}
+            placeholder="Password"
+            autoComplete="new-password"
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        </Form.Item>
+        <Button type="primary" htmlType="submit" loading={loading} block className="cta">
+          Create account
+        </Button>
+      </Form>
+    </AuthLayout>
   );
 };
 

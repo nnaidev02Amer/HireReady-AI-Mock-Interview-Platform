@@ -5,7 +5,8 @@ export const ThemeContext = createContext();
 export const ThemeProvider = ({ children }) => {
   const [isDarkMode, setIsDarkMode] = useState(() => {
     const saved = localStorage.getItem("darkMode");
-    return saved ? JSON.parse(saved) : false;
+    // The interview studio look is dark by default; a saved choice always wins.
+    return saved ? JSON.parse(saved) : true;
   });
 
   useEffect(() => {

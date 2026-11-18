@@ -1,109 +1,66 @@
-import React, { useState, useContext } from "react";
-import { Form, Input, Button, message, Card } from "antd";
-import axios from "axios";
-import { ThemeContext } from "../context/ThemeContext";
-import { useNavigate } from "react-router-dom";
+import React, { useState } from "react";
+import { Alert, Button, Form, Input, message } from "antd";
+import { LockOutlined, MailOutlined } from "@ant-design/icons";
+import { Link, useNavigate } from "react-router-dom";
+import api, { getErrorMessage, setToken } from "../api/client";
+import AuthLayout from "./AuthLayout";
 
 const Login = ({ setAuth }) => {
   const [loading, setLoading] = useState(false);
-  const { isDarkMode } = useContext(ThemeContext);
+  const [error, setError] = useState(null);
   const navigate = useNavigate();
 
   const onFinish = async (values) => {
+    if (loading) return;
     setLoading(true);
+    setError(null);
     try {
-      console.log("API URL:", process.env.REACT_APP_API_URL);
       const formData = new URLSearchParams();
       formData.append("username", values.email);
       formData.append("password", values.password);
 
-      const response = await axios.post(
-        `${process.env.REACT_APP_API_URL}/auth/token`,
-        formData,
-        {
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-          },
-        }
-      );
-      localStorage.setItem("token", response.data.access_token);
+      const response = await api.post("/auth/token", formData);
+      setToken(response.data.access_token);
       setAuth(true);
-      message.success("Login successful");
+      message.success("Welcome back");
       navigate("/dashboard");
-    } catch (error) {
-      console.error("Login error:", error);
-      let errorMessage = "Login failed";
-      if (error.response?.data?.detail) {
-        errorMessage = Array.isArray(error.response.data.detail)
-          ? error.response.data.detail.map((err) => err.msg).join(", ")
-          : error.response.data.detail;
-      }
-      message.error(errorMessage);
+    } catch (err) {
+      console.error("Login error:", err);
+      setError(getErrorMessage(err, "Login failed"));
     }
     setLoading(false);
   };
 
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        minHeight: "100vh",
-      }}
+    <AuthLayout
+      title="Welcome back"
+      subtitle="Log in to continue your interview practice."
+      footer={
+        <>
+          New here? <Link to="/register">Create an account</Link>
+        </>
+      }
     >
-      <Card
-        style={{ width: "100%", maxWidth: "400px", padding: "24px" }}
-        className="card-content"
-      >
-        <h2
-          style={{
-            fontSize: "24px",
-            fontWeight: "bold",
-            textAlign: "center",
-            marginBottom: "24px",
-            color: isDarkMode ? "#fff" : "#000",
-          }}
+      {error && <Alert type="error" showIcon message={error} role="alert" className="auth-alert" />}
+      <Form layout="vertical" onFinish={onFinish} requiredMark={false} size="large" onValuesChange={() => error && setError(null)}>
+        <Form.Item
+          label="Email"
+          name="email"
+          rules={[
+            { required: true, message: "Please enter your email" },
+            { type: "email", message: "Please enter a valid email address" },
+          ]}
         >
-          Login
-        </h2>
-        <Form onFinish={onFinish} layout="vertical">
-          <Form.Item
-            name="email"
-            label={
-              <span style={{ color: isDarkMode ? "#fff" : "#000" }}>Email</span>
-            }
-            rules={[
-              { required: true, message: "Please input your email!" },
-              { type: "email", message: "Please enter a valid email!" },
-            ]}
-          >
-            <Input placeholder="Email" />
-          </Form.Item>
-          <Form.Item
-            name="password"
-            label={
-              <span style={{ color: isDarkMode ? "#fff" : "#000" }}>
-                Password
-              </span>
-            }
-            rules={[{ required: true, message: "Please input your password!" }]}
-          >
-            <Input.Password placeholder="Password" />
-          </Form.Item>
-          <Form.Item>
-            <Button type="primary" htmlType="submit" loading={loading} block>
-              Login
-            </Button>
-          </Form.Item>
-          <div style={{ textAlign: "center" }}>
-            <Button type="link" onClick={() => navigate("/register")}>
-              Don't have an account? Register
-            </Button>
-          </div>
-        </Form>
-      </Card>
-    </div>
+          <Input prefix={<MailOutlined />} placeholder="Email" autoComplete="email" />
+        </Form.Item>
+        <Form.Item label="Password" name="password" rules={[{ required: true, message: "Please enter your password" }]}>
+          <Input.Password prefix={<LockOutlined />} placeholder="Password" autoComplete="current-password" />
+        </Form.Item>
+        <Button type="primary" htmlType="submit" loading={loading} block className="cta">
+          Log in
+        </Button>
+      </Form>
+    </AuthLayout>
   );
 };
 

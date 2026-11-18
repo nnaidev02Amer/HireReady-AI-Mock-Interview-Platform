@@ -1,129 +1,143 @@
-import React, { useContext } from "react";
-import { Button, Switch } from "antd";
-import { useNavigate, Link } from "react-router-dom";
+import React, { useContext, useState } from "react";
+import { Button, Drawer } from "antd";
+import {
+  AppstoreOutlined,
+  CloseOutlined,
+  LogoutOutlined,
+  MenuOutlined,
+  MoonOutlined,
+  PlusOutlined,
+  SunOutlined,
+} from "@ant-design/icons";
+import { Link, NavLink, useNavigate } from "react-router-dom";
 import { ThemeContext } from "../context/ThemeContext";
-import { MoonOutlined, SunOutlined } from "@ant-design/icons";
+import { AppConfigContext } from "../context/AppConfigContext";
+import { clearToken } from "../api/client";
+import Brand from "./common/Brand";
 
 const Navbar = ({ setAuth, auth }) => {
   const { isDarkMode, toggleDarkMode } = useContext(ThemeContext);
+  const { demoMode } = useContext(AppConfigContext);
   const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
 
   const handleLogout = () => {
-    localStorage.removeItem("token");
+    clearToken();
     setAuth(false);
-    navigate("/login");
+    setOpen(false);
+    navigate("/");
   };
 
-  return (
-    <nav className="navbar" style={{ width: "100%", padding: "10px 0" }}>
-      <div
-        className="container"
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          width: "100%",
-          maxWidth: "1200px",
-          margin: "0 auto",
-        }}
-      >
-        {/* Left Section */}
-        <div style={{ flex: 1 }}>
-          <h1
-            style={{
-              margin: 0,
-              fontSize: "20px",
-              color: isDarkMode ? "#e0e0e0" : "#1890ff",
-            }}
-          >
-            AI Mock Interview
-          </h1>
-        </div>
+  const go = (path) => {
+    setOpen(false);
+    navigate(path);
+  };
 
-        {/* Center Section */}
-        <div
-          style={{
-            flex: 2,
-            display: "flex",
-            justifyContent: "center",
-            gap: "20px",
-          }}
-        >
+  const themeToggle = (
+    <button
+      type="button"
+      className="icon-btn"
+      onClick={toggleDarkMode}
+      aria-label={isDarkMode ? "Switch to light theme" : "Switch to dark theme"}
+      title={isDarkMode ? "Light theme" : "Dark theme"}
+    >
+      {isDarkMode ? <SunOutlined /> : <MoonOutlined />}
+    </button>
+  );
+
+  const links = auth ? (
+    <>
+      <NavLink to="/dashboard" className="nav-link">
+        <AppstoreOutlined /> Dashboard
+      </NavLink>
+      <NavLink to="/interview" className="nav-link">
+        <PlusOutlined /> New interview
+      </NavLink>
+    </>
+  ) : null;
+
+  return (
+    <header className="nav">
+      <div className="nav-inner">
+        <Link to={auth ? "/dashboard" : "/"} className="nav-brand" aria-label="HireReady AI home">
+          <Brand />
+        </Link>
+
+        <nav className="nav-links" aria-label="Main">
+          {links}
+        </nav>
+
+        <div className="nav-actions">
+          {demoMode && (
+            <span
+              className="pill pill-demo"
+              title="No Gemini API key is configured: questions and feedback are samples"
+            >
+              Demo mode
+            </span>
+          )}
+          {themeToggle}
+          {auth ? (
+            <Button className="nav-desktop-only" icon={<LogoutOutlined />} onClick={handleLogout}>
+              Log out
+            </Button>
+          ) : (
+            <span className="nav-desktop-only nav-auth">
+              <Button type="text" onClick={() => go("/login")}>
+                Log in
+              </Button>
+              <Button type="primary" className="cta" onClick={() => go("/register")}>
+                Get started
+              </Button>
+            </span>
+          )}
+          <button
+            type="button"
+            className="icon-btn nav-mobile-only"
+            onClick={() => setOpen(true)}
+            aria-label="Open menu"
+            aria-expanded={open}
+          >
+            <MenuOutlined />
+          </button>
+        </div>
+      </div>
+
+      <Drawer
+        open={open}
+        onClose={() => setOpen(false)}
+        placement="right"
+        width={300}
+        closeIcon={<CloseOutlined aria-label="Close menu" />}
+        title={<Brand compact />}
+        className="nav-drawer"
+      >
+        <div className="drawer-links">
           {auth ? (
             <>
-              <Link
-                to="/dashboard"
-                style={{
-                  color: isDarkMode ? "#69c0ff" : "#1890ff",
-                  textDecoration: "none",
-                  fontSize: "16px",
-                }}
-              >
+              <Button block size="large" icon={<AppstoreOutlined />} onClick={() => go("/dashboard")}>
                 Dashboard
-              </Link>
-              <Link
-                to="/interview"
-                style={{
-                  color: isDarkMode ? "#69c0ff" : "#1890ff",
-                  textDecoration: "none",
-                  fontSize: "16px",
-                }}
-              >
-                Interview
-              </Link>
+              </Button>
+              <Button block size="large" type="primary" className="cta" icon={<PlusOutlined />} onClick={() => go("/interview")}>
+                New interview
+              </Button>
+              <Button block size="large" icon={<LogoutOutlined />} onClick={handleLogout}>
+                Log out
+              </Button>
             </>
           ) : (
             <>
-              <Link
-                to="/login"
-                style={{
-                  color: isDarkMode ? "#69c0ff" : "#1890ff",
-                  textDecoration: "none",
-                  fontSize: "16px",
-                }}
-              >
-                Login
-              </Link>
-              <Link
-                to="/register"
-                style={{
-                  color: isDarkMode ? "#69c0ff" : "#1890ff",
-                  textDecoration: "none",
-                  fontSize: "16px",
-                }}
-              >
-                Register
-              </Link>
+              <Button block size="large" onClick={() => go("/login")}>
+                Log in
+              </Button>
+              <Button block size="large" type="primary" className="cta" onClick={() => go("/register")}>
+                Get started
+              </Button>
             </>
           )}
         </div>
-
-        {/* Right Section */}
-        <div
-          style={{
-            flex: 1,
-            display: "flex",
-            justifyContent: "flex-end",
-            alignItems: "center",
-            gap: "12px",
-          }}
-        >
-          <Switch
-            checked={isDarkMode}
-            onChange={toggleDarkMode}
-            checkedChildren={<MoonOutlined />}
-            unCheckedChildren={<SunOutlined />}
-            size="default"
-            style={{ background: isDarkMode ? "#4a4a4a" : "#d9d9d9" }}
-          />
-          {auth && (
-            <Button type="primary" size="middle" onClick={handleLogout}>
-              Logout
-            </Button>
-          )}
-        </div>
-      </div>
-    </nav>
+      </Drawer>
+    </header>
   );
 };
 

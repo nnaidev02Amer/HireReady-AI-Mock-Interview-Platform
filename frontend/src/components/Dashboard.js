@@ -1,770 +1,238 @@
-import React, { useState, useEffect, useContext } from "react";
+import React, { useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { Button, Skeleton, message } from "antd";
 import {
-  Card,
-  Typography,
-  Button,
-  message,
-  Spin,
-  List,
-  Progress,
-  Collapse,
-  Table,
-  Menu,
-  Drawer,
-  Layout,
-} from "antd";
-import { Bar, Pie } from "react-chartjs-2";
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  Title,
-  Tooltip,
-  Legend,
-  ArcElement,
-} from "chart.js";
+  CalendarOutlined,
+  CheckCircleOutlined,
+  ClockCircleOutlined,
+  LineChartOutlined,
+  PlusOutlined,
+  ThunderboltOutlined,
+} from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
-import axios from "axios";
+import api, { getErrorMessage } from "../api/client";
 import { ThemeContext } from "../context/ThemeContext";
-import { PlusOutlined, MenuOutlined } from "@ant-design/icons";
+import ReadinessCard from "./dashboard/ReadinessCard";
+import NextUpCard from "./dashboard/NextUpCard";
+import PerformanceChart from "./dashboard/PerformanceChart";
+import SessionHistory from "./dashboard/SessionHistory";
+import {
+  formatDuration,
+  greeting,
+  isRealAnalysis,
+  nameFromEmail,
+  overallScore,
+  readiness,
+} from "./dashboard/sessionUtils";
 
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  Title,
-  Tooltip,
-  Legend,
-  ArcElement
+const newestFirst = (list) =>
+  [...list].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+// The session that needs attention next: earliest upcoming, else an unfinished one.
+const pickNextUp = (sessions) => {
+  const upcoming = sessions
+    .filter((s) => s.status === "scheduled" || s.status === "missed")
+    .sort((a, b) => new Date(a.scheduled_at) - new Date(b.scheduled_at));
+  if (upcoming.length) return upcoming[0];
+  return sessions.find((s) => s.status === "in_progress") || null;
+};
+
+const Tile = ({ icon, label, value, hint }) => (
+  <div className="tile">
+    <span className="tile-icon" aria-hidden="true">{icon}</span>
+    <span className="tile-label">{label}</span>
+    <strong className="tile-value">{value}</strong>
+    {hint && <span className="tile-hint">{hint}</span>}
+  </div>
 );
 
-const { Title: AntTitle, Text } = Typography;
-const { Panel } = Collapse;
-const { Sider, Content } = Layout;
+const DashboardSkeleton = () => (
+  <div aria-busy="true" aria-label="Loading your dashboard">
+    <Skeleton.Input active block style={{ height: 40, width: 320, marginBottom: 24 }} />
+    <div className="dash-grid">
+      <div className="dash-main">
+        <div className="panel"><Skeleton active paragraph={{ rows: 3 }} /></div>
+        <div className="panel"><Skeleton active paragraph={{ rows: 5 }} /></div>
+      </div>
+      <div className="dash-side">
+        <div className="panel"><Skeleton.Avatar active size={120} shape="circle" /><Skeleton active paragraph={{ rows: 2 }} /></div>
+        <div className="panel"><Skeleton active paragraph={{ rows: 3 }} /></div>
+      </div>
+    </div>
+  </div>
+);
 
-const Dashboard = ({ setAuth }) => {
+const Dashboard = () => {
   const [sessions, setSessions] = useState([]);
-  const [selectedSessionId, setSelectedSessionId] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [drawerVisible, setDrawerVisible] = useState(false);
+  const [email, setEmail] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
+  const [now, setNow] = useState(() => new Date());
   const navigate = useNavigate();
   const { isDarkMode } = useContext(ThemeContext);
 
+  // Keeps countdowns and "Start" buttons for scheduled interviews current.
   useEffect(() => {
-    const fetchSessions = async () => {
-      setLoading(true);
-      try {
-        const token = localStorage.getItem("token");
-        if (!token) {
-          message.error("Please login to view dashboard");
-          setAuth(false);
-          navigate("/login");
-          return;
-        }
-        const response = await axios.get(
-          `${process.env.REACT_APP_API_URL}/interview/dashboard`,
-          {
-            headers: { Authorization: `Bearer ${token}` },
-          }
-        );
-        const sortedSessions = (response.data.sessions || []).sort(
-          (a, b) => new Date(b.created_at) - new Date(a.created_at)
-        );
-        setSessions(sortedSessions);
-        if (sortedSessions.length > 0) {
-          setSelectedSessionId(sortedSessions[0].session_id);
-        }
-      } catch (error) {
-        console.error("Dashboard fetch error:", error);
-        if (error.response?.status === 401) {
-          message.error("Session expired. Please login again.");
-          localStorage.removeItem("token");
-          setAuth(false);
-          navigate("/login");
-        } else {
-          message.error(
-            error.response?.data?.detail || "Failed to load dashboard"
-          );
-        }
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchSessions();
-  }, [navigate, setAuth]);
+    const timer = setInterval(() => setNow(new Date()), 30000);
+    return () => clearInterval(timer);
+  }, []);
 
-  const selectedSession = sessions.find(
-    (s) => s.session_id === selectedSessionId
+  const load = useCallback(async () => {
+    setLoading(true);
+    setFailed(false);
+    try {
+      const [dash, me] = await Promise.allSettled([
+        api.get("/interview/dashboard"),
+        api.get("/auth/me"),
+      ]);
+      if (dash.status === "rejected") throw dash.reason;
+      setSessions(newestFirst(dash.value.data.sessions || []));
+      if (me.status === "fulfilled") setEmail(me.value.data.email);
+    } catch (error) {
+      console.error("Dashboard fetch error:", error);
+      setFailed(true);
+      // A 401 is handled globally by the API client (logout + redirect).
+      if (!error.sessionExpired) message.error(getErrorMessage(error, "Failed to load dashboard"));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const startSession = useCallback(
+    (session) => navigate(`/interview?session=${session.session_id}`),
+    [navigate]
+  );
+  const openReport = useCallback(
+    (session) => navigate(`/sessions/${session.session_id}/report`),
+    [navigate]
   );
 
-  const renderScoreChart = (analytics) => {
-    if (!analytics?.questions?.length) {
-      return null;
+  const deleteSession = useCallback(async (session) => {
+    setDeletingId(session.session_id);
+    try {
+      await api.delete(`/interview/sessions/${session.session_id}`);
+      message.success("Interview deleted");
+      setSessions((prev) => prev.filter((s) => s.session_id !== session.session_id));
+    } catch (error) {
+      if (!error.sessionExpired) message.error(getErrorMessage(error, "Failed to delete interview"));
+    } finally {
+      setDeletingId(null);
     }
+  }, []);
 
-    const data = {
-      labels: analytics.questions.map((_, i) => `Q${i + 1}`),
-      datasets: [
-        {
-          label: "Score",
-          data: analytics.questions.map((q) => q.score || 0),
-          backgroundColor: isDarkMode
-            ? "rgba(100, 200, 200, 0.6)"
-            : "rgba(75, 192, 192, 0.6)",
-          borderColor: isDarkMode
-            ? "rgba(100, 200, 200, 1)"
-            : "rgba(75, 192, 192, 1)",
-          borderWidth: 1,
-        },
-      ],
-    };
-
-    const options = {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: { legend: { display: false }, title: { display: false } },
-      scales: {
-        y: {
-          beginAtZero: true,
-          max: 100,
-          ticks: {
-            color: isDarkMode ? "#e0e0e0" : "#5c5c5c",
-            font: { size: 10 },
-          },
-          grid: { color: isDarkMode ? "#3a3a3a" : "#e8e8e8" },
-        },
-        x: {
-          ticks: {
-            color: isDarkMode ? "#e0e0e0" : "#5c5c5c",
-            font: { size: 10 },
-          },
-          grid: { display: false },
-        },
-      },
-    };
-
-    return (
-      <div className="chart-container" style={{ height: "80px" }}>
-        <Bar data={data} options={options} />
-      </div>
-    );
-  };
-
-  const renderCommunicationPieChart = (communication) => {
-    const strengthsCount = (communication?.strengths || []).length;
-    const improvementAreasCount = (communication?.improvementAreas || [])
-      .length;
-    const total = strengthsCount + improvementAreasCount;
-
-    if (total === 0) return null;
-
-    const data = {
-      labels: ["Strengths", "Improvement Areas"],
-      datasets: [
-        {
-          data: [strengthsCount, improvementAreasCount],
-          backgroundColor: isDarkMode
-            ? ["#2b6cb0", "#c53030"]
-            : ["#1890ff", "#ff4d4f"],
-          borderColor: isDarkMode
-            ? ["#2b6cb0", "#c53030"]
-            : ["#1890ff", "#ff4d4f"],
-          borderWidth: 1,
-        },
-      ],
-    };
-
-    const options = {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: {
-          position: "bottom",
-          labels: {
-            color: isDarkMode ? "#e0e0e0" : "#5c5c5c",
-            font: { size: 10 },
-          },
-        },
-      },
-    };
-
-    return (
-      <div
-        className="chart-container"
-        style={{ height: "120px", marginTop: "12px" }}
-      >
-        <Text
-          strong
-          style={{
-            color: isDarkMode ? "#e0e0e0" : "#1a1a1a",
-            fontSize: "12px",
-          }}
-        >
-          Communication Breakdown
-        </Text>
-        <Pie data={data} options={options} />
-      </div>
-    );
-  };
-
-  const renderResponseTimeTimeline = (analytics) => {
-    if (!analytics?.questions?.length) {
-      return null;
-    }
-
-    const totalTime = analytics.questions.reduce(
-      (sum, q) => sum + (q.time_consumed_seconds || 0),
+  const stats = useMemo(() => {
+    const completed = sessions.filter((s) => s.status === "completed");
+    const real = sessions.filter(isRealAnalysis);
+    const avg = real.length
+      ? Math.round(real.reduce((a, s) => a + overallScore(s), 0) / real.length)
+      : null;
+    const seconds = completed.reduce(
+      (sum, s) => sum + (s.analytics?.questions || []).reduce((a, q) => a + (q.time_consumed_seconds || 0), 0),
       0
     );
+    return {
+      completed: completed.length,
+      avg,
+      realCount: real.length,
+      seconds,
+      upcoming: sessions.filter((s) => s.status === "scheduled" || s.status === "missed").length,
+      demoOnly: completed.length > 0 && real.length === 0,
+    };
+  }, [sessions]);
 
+  const name = nameFromEmail(email).split(" ")[0];
+  const nextUp = useMemo(() => pickNextUp(sessions), [sessions]);
+  const ready = useMemo(() => readiness(sessions), [sessions]);
+
+  if (loading) {
     return (
-      <div style={{ marginTop: "12px" }}>
-        <Text
-          strong
-          style={{
-            color: isDarkMode ? "#e0e0e0" : "#1a1a1a",
-            fontSize: "12px",
-          }}
-        >
-          Response Time (Total: {totalTime.toFixed(1)}s)
-        </Text>
-        {analytics.questions.map((q, i) => (
-          <div
-            key={i}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "8px",
-              margin: "4px 0",
-            }}
-          >
-            <Text
-              style={{
-                color: isDarkMode ? "#a0a0a0" : "#5c5c5c",
-                fontSize: "12px",
-              }}
-            >
-              Q{i + 1}:
-            </Text>
-            <Progress
-              percent={((q.time_consumed_seconds || 0) / totalTime) * 100}
-              size="small"
-              strokeColor={isDarkMode ? "#2b6cb0" : "#1890ff"}
-              showInfo={false}
-              style={{ width: "100px" }}
-            />
-            <Text
-              style={{
-                color: isDarkMode ? "#a0a0a0" : "#5c5c5c",
-                fontSize: "12px",
-              }}
-            >
-              {(q.time_consumed_seconds || 0).toFixed(1)}s
-            </Text>
-          </div>
-        ))}
+      <div className="page">
+        <DashboardSkeleton />
       </div>
     );
-  };
+  }
 
-  const columns = [
-    {
-      title: "Question",
-      dataIndex: "question",
-      key: "question",
-      render: (text) => (
-        <Text style={{ color: isDarkMode ? "#e0e0e0" : "#1a1a1a" }}>
-          {text}
-        </Text>
-      ),
-    },
-    {
-      title: "Answer",
-      dataIndex: "answer",
-      key: "answer",
-      render: (text) => (
-        <Text style={{ color: isDarkMode ? "#a0a0a0" : "#5c5c5c" }}>
-          {text || "No answer"}
-        </Text>
-      ),
-    },
-    {
-      title: "Score",
-      dataIndex: "score",
-      key: "score",
-      render: (score) => (
-        <Text style={{ color: isDarkMode ? "#e0e0e0" : "#1a1a1a" }}>
-          {score || 0}
-        </Text>
-      ),
-    },
-    {
-      title: "Body Language",
-      dataIndex: "body_language",
-      key: "body_language",
-      render: (text) => (
-        <Text style={{ color: isDarkMode ? "#a0a0a0" : "#5c5c5c" }}>
-          {text || "N/A"}
-        </Text>
-      ),
-    },
-    {
-      title: "Communication",
-      dataIndex: "communication",
-      key: "communication",
-      render: (text) => (
-        <Text style={{ color: isDarkMode ? "#a0a0a0" : "#5c5c5c" }}>
-          {text || "N/A"}
-        </Text>
-      ),
-    },
-    {
-      title: "Time (s)",
-      dataIndex: "time_consumed_seconds",
-      key: "time",
-      render: (time) => (
-        <Text style={{ color: isDarkMode ? "#e0e0e0" : "#1a1a1a" }}>
-          {(time || 0).toFixed(1)}
-        </Text>
-      ),
-    },
-  ];
-
-  const renderInsights = (insights) => (
-    <div style={{ marginTop: "12px" }}>
-      <Text
-        strong
-        style={{ color: isDarkMode ? "#e0e0e0" : "#1a1a1a", fontSize: "14px" }}
-      >
-        Feedback Insights:
-      </Text>
-      <List
-        dataSource={insights || []}
-        renderItem={(item) => (
-          <List.Item style={{ padding: "4px 0" }}>
-            <Text
-              style={{
-                color: isDarkMode ? "#a0a0a0" : "#5c5c5c",
-                fontSize: "12px",
-              }}
-            >
-              {item}
-            </Text>
-          </List.Item>
-        )}
-      />
-    </div>
-  );
-
-  const renderCommunicationAnalysis = (communication) => (
-    <div style={{ marginTop: "12px" }}>
-      <Text
-        strong
-        style={{ color: isDarkMode ? "#e0e0e0" : "#1a1a1a", fontSize: "14px" }}
-      >
-        Communication Analysis:
-      </Text>
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: "8px",
-          marginTop: "8px",
-        }}
-      >
-        <Text
-          style={{
-            color: isDarkMode ? "#a0a0a0" : "#5c5c5c",
-            fontSize: "12px",
-          }}
-        >
-          <strong>Score:</strong> {communication.score || 0}/10
-        </Text>
-        <Text
-          style={{
-            color: isDarkMode ? "#a0a0a0" : "#5c5c5c",
-            fontSize: "12px",
-          }}
-        >
-          <strong>Feedback:</strong>{" "}
-          {communication.overallFeedback || "No feedback available."}
-        </Text>
-        <Text
-          strong
-          style={{
-            color: isDarkMode ? "#e0e0e0" : "#1a1a1a",
-            fontSize: "12px",
-          }}
-        >
-          Quotes:
-        </Text>
-        <List
-          dataSource={communication.supportingQuotes || []}
-          renderItem={(item) => (
-            <List.Item style={{ padding: "4px 0" }}>
-              <Text
-                style={{
-                  color: isDarkMode ? "#a0a0a0" : "#5c5c5c",
-                  fontSize: "12px",
-                }}
-              >
-                <strong>
-                  {item.type === "strength" ? "Strength" : "Improvement"}:
-                </strong>{" "}
-                "{item.quote}" - {item.analysis}
-              </Text>
-            </List.Item>
-          )}
-        />
-        <Text
-          strong
-          style={{
-            color: isDarkMode ? "#e0e0e0" : "#1a1a1a",
-            fontSize: "12px",
-          }}
-        >
-          Strengths:
-        </Text>
-        <List
-          dataSource={communication.strengths || []}
-          renderItem={(item) => (
-            <List.Item style={{ padding: "4px 0" }}>
-              <Text
-                style={{
-                  color: isDarkMode ? "#a0a0a0" : "#5c5c5c",
-                  fontSize: "12px",
-                }}
-              >
-                - {item}
-              </Text>
-            </List.Item>
-          )}
-        />
-        <Text
-          strong
-          style={{
-            color: isDarkMode ? "#e0e0e0" : "#1a1a1a",
-            fontSize: "12px",
-          }}
-        >
-          Improvement Areas:
-        </Text>
-        <List
-          dataSource={communication.improvementAreas || []}
-          renderItem={(item) => (
-            <List.Item style={{ padding: "4px 0" }}>
-              <Text
-                style={{
-                  color: isDarkMode ? "#a0a0a0" : "#5c5c5c",
-                  fontSize: "12px",
-                }}
-              >
-                - {item}
-              </Text>
-            </List.Item>
-          )}
-        />
+  if (failed && sessions.length === 0) {
+    return (
+      <div className="page">
+        <div className="panel empty">
+          <ClockCircleOutlined />
+          <p>We couldn&apos;t load your dashboard.</p>
+          <Button type="primary" onClick={load}>
+            Try again
+          </Button>
+        </div>
       </div>
-    </div>
-  );
+    );
+  }
 
   return (
-    <Layout style={{ minHeight: "100vh", background: "transparent" }}>
-      <Sider
-        width={200}
-        style={{
-          background: isDarkMode ? "#2a2a2a" : "#f0f2f5",
-          borderRight: isDarkMode ? "1px solid #3a3a3a" : "1px solid #e8e8e8",
-          display: window.innerWidth <= 768 ? "none" : "block",
-        }}
-      >
-        <div style={{ padding: "16px" }}>
-          <AntTitle
-            level={4}
-            style={{
-              color: isDarkMode ? "#e0e0e0" : "#1a1a1a",
-              marginBottom: "16px",
-            }}
-          >
-            Sessions
-          </AntTitle>
-          <Menu
-            mode="inline"
-            selectedKeys={[selectedSessionId]}
-            onClick={({ key }) => setSelectedSessionId(key)}
-            style={{ background: "transparent" }}
-          >
-            {sessions.map((session) => (
-              <Menu.Item
-                key={session.session_id}
-                style={{
-                  color: isDarkMode ? "#a0a0a0" : "#5c5c5c",
-                  fontSize: "12px",
-                }}
-              >
-                {session.session_id.slice(0, 8)}... (
-                {new Date(session.created_at).toLocaleDateString()})
-              </Menu.Item>
-            ))}
-          </Menu>
+    <div className="page">
+      <header className="welcome">
+        <div>
+          <span className="eyebrow">{greeting(now)}</span>
+          <h1>{name ? `${name}, ` : ""}here&apos;s where your practice stands.</h1>
         </div>
-      </Sider>
-      <Drawer
-        title="Sessions"
-        placement="left"
-        onClose={() => setDrawerVisible(false)}
-        visible={drawerVisible}
-        bodyStyle={{
-          padding: 0,
-          background: isDarkMode ? "#2a2a2a" : "#f0f2f5",
-        }}
-        headerStyle={{
-          background: isDarkMode ? "#2a2a2a" : "#f0f2f5",
-          color: isDarkMode ? "#e0e0e0" : "#1a1a1a",
-        }}
-      >
-        <Menu
-          mode="inline"
-          selectedKeys={[selectedSessionId]}
-          onClick={({ key }) => {
-            setSelectedSessionId(key);
-            setDrawerVisible(false);
-          }}
-          style={{ background: "transparent" }}
-        >
-          {sessions.map((session) => (
-            <Menu.Item
-              key={session.session_id}
-              style={{
-                color: isDarkMode ? "#a0a0a0" : "#5c5c5c",
-                fontSize: "12px",
-              }}
-            >
-              {session.session_id.slice(0, 8)}... (
-              {new Date(session.created_at).toLocaleDateString()})
-            </Menu.Item>
-          ))}
-        </Menu>
-      </Drawer>
-      <Content style={{ padding: "16px", background: "transparent" }}>
-        <div className="container">
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              marginBottom: "16px",
-            }}
-          >
-            <AntTitle
-              level={2}
-              style={{
-                margin: 0,
-                color: isDarkMode ? "#e0e0e0" : "#1a1a1a",
-                fontSize: "24px",
-              }}
-            >
-              Interview Dashboard
-            </AntTitle>
-            <div style={{ display: "flex", gap: "8px" }}>
-              {window.innerWidth <= 768 && (
-                <Button
-                  icon={<MenuOutlined />}
-                  onClick={() => setDrawerVisible(true)}
-                />
-              )}
-              <Button
-                type="primary"
-                icon={<PlusOutlined />}
-                onClick={() => navigate("/interview")}
-                style={{ borderRadius: "4px" }}
-              >
-                Create Interview
-              </Button>
+        <div className="row-gap">
+          <Button size="large" icon={<CalendarOutlined />} onClick={() => navigate("/interview?mode=later")}>
+            Schedule
+          </Button>
+          <Button type="primary" size="large" className="cta" icon={<PlusOutlined />} onClick={() => navigate("/interview")}>
+            New interview
+          </Button>
+        </div>
+      </header>
+
+      <div className="dash-grid">
+        <div className="dash-main">
+          <NextUpCard
+            session={nextUp}
+            now={now}
+            busy={deletingId !== null}
+            onStart={startSession}
+            onDelete={deleteSession}
+            onNew={() => navigate("/interview")}
+            onSchedule={() => navigate("/interview?mode=later")}
+          />
+          <section className="panel" aria-labelledby="perf-title">
+            <div className="section-head">
+              <h2 id="perf-title">Performance over time</h2>
+              <span className="muted small">Overall score per completed interview</span>
             </div>
-          </div>
-          {loading ? (
-            <Spin style={{ display: "block", margin: "40px auto" }} />
-          ) : sessions.length === 0 ? (
-            <Card
-              className="card-content"
-              style={{
-                textAlign: "center",
-                maxWidth: "500px",
-                margin: "0 auto",
-              }}
-            >
-              <Text
-                style={{
-                  color: isDarkMode ? "#a0a0a0" : "#5c5c5c",
-                  fontSize: "14px",
-                }}
-              >
-                No interviews found. Start a new session!
-              </Text>
-              <Button
-                type="primary"
-                style={{ marginTop: "12px" }}
-                onClick={() => navigate("/interview")}
-              >
-                Create Interview
-              </Button>
-            </Card>
-          ) : !selectedSession ? (
-            <Card
-              className="card-content"
-              style={{
-                textAlign: "center",
-                maxWidth: "500px",
-                margin: "0 auto",
-              }}
-            >
-              <Text
-                style={{
-                  color: isDarkMode ? "#a0a0a0" : "#5c5c5c",
-                  fontSize: "14px",
-                }}
-              >
-                Select a session from the sidebar to view details.
-              </Text>
-            </Card>
-          ) : (
-            <Card
-              className="card-content"
-              style={{ borderRadius: "8px", padding: "12px" }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "12px",
-                }}
-              >
-                <Text
-                  strong
-                  style={{
-                    color: isDarkMode ? "#e0e0e0" : "#1a1a1a",
-                    fontSize: "16px",
-                  }}
-                >
-                  {selectedSession.job_description || "Untitled Session"}
-                </Text>
-                <Text
-                  style={{
-                    color: isDarkMode ? "#a0a0a0" : "#5c5c5c",
-                    fontSize: "12px",
-                  }}
-                >
-                  Created:{" "}
-                  {new Date(selectedSession.created_at).toLocaleString()}
-                </Text>
-                <Text
-                  style={{
-                    color: isDarkMode ? "#a0a0a0" : "#5c5c5c",
-                    fontSize: "12px",
-                  }}
-                >
-                  Difficulty: {selectedSession.difficulty || "N/A"}
-                </Text>
-                <Text
-                  style={{
-                    color: isDarkMode ? "#a0a0a0" : "#5c5c5c",
-                    fontSize: "12px",
-                  }}
-                >
-                  Questions: {selectedSession.num_questions || 0}
-                </Text>
-                <div
-                  style={{ display: "flex", alignItems: "center", gap: "8px" }}
-                >
-                  <Text
-                    style={{
-                      color: isDarkMode ? "#a0a0a0" : "#5c5c5c",
-                      fontSize: "12px",
-                    }}
-                  >
-                    Overall Score:
-                  </Text>
-                  <Progress
-                    percent={selectedSession.analytics?.overall_score || 0}
-                    size="small"
-                    strokeColor={isDarkMode ? "#2b6cb0" : "#1890ff"}
-                    style={{
-                      width: "100px",
-                      color: isDarkMode ? "#a0a0a0" : "#5c5c5c",
-                    }}
-                  />
-                </div>
-                {renderScoreChart(selectedSession.analytics)}
-                {selectedSession.video_url && (
-                  <div style={{ margin: "12px 0" }}>
-                    <video
-                      controls
-                      src={selectedSession.video_url}
-                      className="video-player"
-                    />
-                  </div>
-                )}
-                <Collapse
-                  style={{ background: "transparent" }}
-                  defaultActiveKey={["1"]}
-                  className="dark-mode-collapse"
-                >
-                  <Panel
-                    header={
-                      <Text
-                        style={{
-                          color: isDarkMode ? "#e0e0e0" : "#1a1a1a",
-                          fontSize: "14px",
-                        }}
-                      >
-                        Detailed Analysis
-                      </Text>
-                    }
-                    key="1"
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: "12px",
-                      }}
-                    >
-                      <Text
-                        strong
-                        style={{
-                          color: isDarkMode ? "#e0e0e0" : "#1a1a1a",
-                          fontSize: "14px",
-                        }}
-                      >
-                        Questions and Responses:
-                      </Text>
-                      <Table
-                        columns={columns}
-                        dataSource={selectedSession.analytics?.questions || []}
-                        pagination={false}
-                        rowKey={(record, index) => index}
-                        size="small"
-                        className="dark-mode-table"
-                      />
-                      {renderInsights(selectedSession.analytics?.insights)}
-                      {renderCommunicationAnalysis(
-                        selectedSession.analytics?.communication || {}
-                      )}
-                      {renderCommunicationPieChart(
-                        selectedSession.analytics?.communication
-                      )}
-                      {renderResponseTimeTimeline(selectedSession.analytics)}
-                    </div>
-                  </Panel>
-                </Collapse>
-              </div>
-            </Card>
-          )}
+            <PerformanceChart sessions={sessions} isDarkMode={isDarkMode} />
+          </section>
         </div>
-      </Content>
-    </Layout>
+
+        <div className="dash-side">
+          <ReadinessCard readiness={ready} hasDemoOnly={stats.demoOnly} />
+          <section className="tiles" aria-label="Summary">
+            <Tile icon={<CheckCircleOutlined />} label="Completed" value={stats.completed} />
+            <Tile
+              icon={<LineChartOutlined />}
+              label="Average score"
+              value={stats.avg === null ? "-" : stats.avg}
+              hint={stats.avg === null ? "AI-analysed only" : `${stats.realCount} AI-analysed`}
+            />
+            <Tile icon={<ThunderboltOutlined />} label="Practice time" value={stats.seconds ? formatDuration(stats.seconds) : "-"} hint="answering" />
+            <Tile icon={<CalendarOutlined />} label="Upcoming" value={stats.upcoming} />
+          </section>
+        </div>
+      </div>
+
+      <SessionHistory
+        sessions={sessions}
+        now={now}
+        deletingId={deletingId}
+        onOpen={openReport}
+        onStart={startSession}
+        onDelete={deleteSession}
+        onNew={() => navigate("/interview")}
+      />
+    </div>
   );
 };
 
